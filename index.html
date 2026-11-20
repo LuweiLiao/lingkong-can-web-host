@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>瓴控 CAN 关节电机上位机</title>
+<link rel='stylesheet' href='css/style.css'>
+</head>
+<body>
+<header id='topbar'>
+  <div class='tb1'>
+    <div class='brand'><b>瓴控关节电机</b><small>CAN 上位机 · 协议 V2.4</small></div>
+    <div class='conn'>
+      <label class='f'>串口<select id='portSel'></select></label>
+      <button id='btnAddPort' title='弹出浏览器的串口选择框，授权一个新设备'>添加串口…</button>
+      <label class='f'>CAN 速率<select id='canKbps'><option value='100'>100k</option><option value='125'>125k</option><option value='250'>250k</option><option value='500'>500k</option><option value='1000' selected>1M</option></select></label>
+      <label class='f'>节点 ID<input id='nodeId' type='number' min='1' max='63' value='1'></label>
+      <details class='pop'><summary>连接参数</summary><div class='popbox'>
+        <label class='f'>串口波特率<select id='serialBaud'><option>115200</option><option>460800</option><option>921600</option><option>2000000</option></select></label>
+        <label class='f'>帧格式<select id='frameFmt'><option value='0'>标准帧</option><option value='1'>扩展帧</option></select></label>
+        <label class='f'>回复 ID<select id='ackMode'><option value='0'>0x140+ID（默认）</option><option value='1'>0x180+ID</option></select></label>
+        <label class='chk'><input id='listenOnly' type='checkbox'>只听模式</label>
+      </div></details>
+      <button id='btnConnect' class='primary'>连接</button>
+      <span id='connState' class='badge off'>未连接</span>
+      <details class='pop'><summary>设备信息</summary><div class='popbox wide'>
+        <div class='row'><button class='net' id='btnInfo'>读取设备信息</button><button class='net' id='btnOnce'>读一次全部状态</button></div>
+        <div id='devInfo' class='mono'>连接后点“读取设备信息”。</div>
+      </div></details>
+      <button id='btnTools' title='校准、维护、广播控制'>维护工具</button>
+    </div>
+    <div id='safety'>首次调试请空载、固定电机并备好独立断电，通信命令不能替代急停</div>
+    <div id='quick'><button id='btnStop' class='danger' disabled title='0x81：以 0 扭矩停止'>停止</button><button id='btnOff' disabled title='0x80：关闭电机'>关闭电机</button></div>
+  </div>
+  <div class='tb2'>
+    <div id='hero' class='hero' data-st='off'><span class='led'></span><div><small>电机状态</small><b id='dState'>未连接</b></div><div class='errbar'><small>故障</small><b id='dErr'>-</b></div></div>
+    <div class='tiles'>
+      <div class='tile c-blue'><small>多圈角度</small><b id='dAngle'>-</b></div>
+      <div class='tile c-blue'><small>单圈角度</small><b id='dAngle1'>-</b></div>
+      <div class='tile c-green'><small>速度</small><b id='dSpeed'>-</b></div>
+      <div class='tile c-orange'><small>Iq 电流</small><b id='dIq'>-</b></div>
+      <div class='tile c-cyan'><small>母线电压</small><b id='dVbus'>-</b></div>
+      <div class='tile c-pink'><small>母线电流</small><b id='dIbus'>-</b></div>
+      <div class='tile c-red'><small>电机温度</small><b id='dTemp'>-</b></div>
+      <div class='tile c-lime'><small>编码器位置</small><b id='dEnc'>-</b></div>
+    </div>
+  </div>
+</header>
+<div id='noSerial' hidden>当前浏览器不支持 Web Serial，请使用 Chrome、Edge 或 ego lite 打开本页。</div>
+<main id='layout'>
+<aside id='side'>
+  <div class='setbar'><b>电机参数</b><button class='net primary' id='sReadAll'>读取</button><button class='net' id='sApply'>应用修改</button><button class='net danger' id='sSave'>保存到电机</button><span class='dim'>改过的项标黄 · 应用只写内存，确认后再保存</span><span id='sInfo' class='mono dim'></span><span class='grow'></span><button id='sExport'>导出</button><label class='btnlike'>导入<input type='file' id='sImport' accept='.json' hidden></label></div>
+  <div class='cols'>
+    <div class='scol'>
+      <section class='pnl c-blue'><h2>电机控制</h2>
+        <div class='btngrid g2'>
+          <button class='net primary' id='cOn' title='0x88'>开启电机</button><button class='net' id='cStop' title='0x81'>停止</button><button class='net' id='cOff' title='0x80'>关闭电机</button>
+          <button class='net' id='cClr' title='0x9B'>清除故障</button>
+        </div>
+        <div class='brake'><span>抱闸</span><button class='net' data-brake='0'>吸合</button><button class='net' data-brake='1'>释放</button><button class='net' data-brake='16'>查询</button><b id='brakeSt'>-</b></div>
+        <div class='fgrid'>
+          <label class='f'>运动模式<select id='mMode'><option value='A1'>A1 电流</option><option value='A2' selected>A2 速度</option><option value='A3'>A3 多圈位置</option><option value='A4'>A4 多圈位置·限速</option><option value='A5'>A5 单圈位置</option><option value='A6'>A6 单圈位置·限速</option><option value='A7'>A7 增量位置</option><option value='A8'>A8 增量位置·限速</option></select></label>
+          <label class='f'>目标<input id='mTarget' type='number' value='0' step='any'></label>
+          <label class='f' id='mLLbl'>限制 <input id='mLim' type='number' value='0'></label>
+          <label class='f' id='mDLbl'>方向 <select id='mDir'><option value='0'>正向</option><option value='1'>反向</option></select></label>
+        </div>
+        <div class='row'><input id='mSlider' type='range' min='-360' max='360' value='0' step='1' class='grow'><span id='mHint' class='mono dim'></span></div>
+        <div class='row'><button class='net primary' id='mSend'>发送</button><label class='chk'><input type='checkbox' id='mRepeat'>连续</label><label class='inl' title='连续发送的周期'><input id='mRepMs' type='number' value='20' min='5' style='width:48px'>ms</label><span class='grow'></span><button class='net danger' id='mHalt' title='停止连续发送并发 0x81'>停机</button></div>
+        <div class='kv'><span>发送</span><b id='mFrame' class='mono'>-</b></div>
+        <div class='kv'><span>回复</span><b id='mReply' class='mono'>-</b></div>
+      </section>
+      <section class='pnl c-cyan'><h2 title='指令和读数里的角度都是电机侧，输出端 = 电机侧 ÷ R'>零点与角度<em id='zR'>减速比 R = -</em></h2>
+        <div class='zgrid'>
+          <div><small>多圈角度（电机侧）</small><b id='zMulti'>-</b></div>
+          <div><small>= 输出端圈数 + 单圈</small><b id='zTurns'>-</b></div>
+          <div><small>输出端角度（÷R）</small><b id='zOut'>-</b></div>
+          <div><small>编码器（0~65535 对应单圈）</small><b id='zEnc'>-</b></div>
+        </div>
+        <div class='btngrid'><button class='net' id='cZero' title='0x95：当前位置设为零点，只在内存，重启失效'>设当前为零点</button><button class='net' id='cClrAng' title='0x93：清除多圈累计，只保留单圈'>清多圈角度</button><button class='net danger' id='zOffset' title='0x19：当前位置写入编码器零偏并永久保存到 Flash，需先停机、轴静止'>写入 Flash</button></div>
+      </section>
+      <section class='pnl c-green'><h2>响应测试<em>曲线画在右侧子图</em></h2>
+        <div class='fgrid g3'>
+          <label class='f'>对象<select id='tLoop'><option value='speed'>速度环</option><option value='pos'>位置环</option><option value='torque'>电流环</option></select></label>
+          <label class='f'>波形<select id='tWave'><option value='step'>阶跃</option><option value='square'>方波</option><option value='sine'>正弦</option></select></label>
+          <label class='f'>幅值<input id='tAmp' type='number' value='60' step='any'></label>
+          <label class='f'>周期 s<input id='tPer' type='number' value='1' step='0.1' min='0.05'></label>
+          <label class='f'>总时长 s<input id='tDur' type='number' value='3' step='0.1' min='0.2' max='60'></label>
+          <label class='f' id='tLimLbl'>限制 <input id='tLim' type='number' value='0'></label>
+        </div>
+        <div class='row'><button class='net primary' id='tRun'>开始测试</button><button class='net danger' id='tAbort'>中止</button><button id='tCsv'>导出</button><span class='grow'></span><label class='inl' title='两次请求之间的间隔'>间隔<input id='tMs' type='number' value='2' min='0' style='width:40px'>ms</label></div>
+        <div id='tMetrics' class='metrics'>阶跃在 0.2 s 跳变；结束后速度环、电流环回 0。</div>
+      </section>
+    </div>
+    <div class='scol'>
+      <section class='pnl c-green'><h2>PID 调参<em>运行时，重启后恢复</em></h2>
+        <table class='pidt'><thead><tr><th></th><th>Kp</th><th>Ki</th><th>Kd</th></tr></thead><tbody id='pidBody'></tbody></table>
+        <div class='row'><button class='net' id='pidRead'>读取</button><button class='net primary' id='pidWrite'>写入</button><button class='net' id='pidPersist' title='Kp/Ki 写入参数表并保存到 Flash；Kd 只能运行时修改'>写入并保存</button></div>
+        <h3>运行时限制</h3>
+        <table class='limt'><tbody id='limBody'></tbody></table>
+        <div class='row'><button class='net' id='limRead'>读取</button><button class='net primary' id='limWrite'>写入</button></div>
+      </section>
+      <div id='setA' class='shost'></div>
+    </div>
+    <div id='setC' class='scol shost'></div>
+  </div>
+</aside>
+<section id='plots'>
+  <div class='ptool'>
+    <button class='net primary' id='scStart'>开始采集</button><button id='scPause'>暂停</button><button id='scClear'>清空</button>
+    <label class='inl'>窗口<select id='scWin' style='width:70px'><option value='5'>5 s</option><option value='10' selected>10 s</option><option value='30'>30 s</option><option value='60'>60 s</option><option value='120'>120 s</option></select></label>
+    <label class='inl'>周期<input id='pollMs' type='number' value='50' min='10' max='2000' style='width:54px'>ms</label>
+    <label class='chk'><input type='checkbox' id='scS1' checked>电源</label><label class='chk'><input type='checkbox' id='scS3' title='每轮多读一次 0x9D，采样会变慢'>三相</label>
+    <span class='grow'></span><span class='qmark' title='滚轮：缩放时间轴（6 个子图同步）&#10;Ctrl/Shift + 滚轮：缩放当前子图纵轴&#10;左键或中键拖动：平移&#10;双击：回到实时跟随'>?</span>
+    <button id='scCsv' title='导出全部曲线数据为 CSV'>导出</button><button id='scPng' title='6 个子图拼成一张 PNG'>截图</button>
+    <input type='checkbox' id='pollOn' hidden>
+  </div>
+  <div id='plotGrid'></div>
+  <details id='tab-monitor' class='menu'><summary><i class='mi c-lime'></i>帧监视与原始帧<small>收发记录、解析、手动发帧</small></summary><div class='mbody'>
+    <div class='row'><label class='inl'>ID<input id='rId' value='141' class='mono' style='width:80px'></label><label class='chk'><input type='checkbox' id='rExt'>扩展帧</label><label class='inl'>数据<input id='rData' value='9A 00 00 00 00 00 00 00' class='mono' style='width:240px'></label><button class='net primary' id='rSend'>发送</button><span class='warn'>原始帧不做检查，只发协议里列出的命令</span></div>
+    <div class='row'><label class='chk'><input type='checkbox' id='lgOn' checked>记录</label><label class='inl'>ID 过滤<input id='lgFilter' class='mono' style='width:120px' placeholder='如 141,142'></label><label class='chk'><input type='checkbox' id='lgHideTx'>隐藏发送</label><label class='chk'><input type='checkbox' id='lgHidePoll'>隐藏状态查询</label><button id='lgClear'>清空</button><button id='lgExport'>导出</button><span id='lgCount' class='mono dim'></span></div>
+    <div class='lgwrap'><table class='mono'><thead><tr><th>时间 ms</th><th>方向</th><th>ID</th><th>数据</th><th>解析</th></tr></thead><tbody id='lgBody'></tbody></table></div>
+  </div></details>
+</section>
+</main>
+<footer id='statusbar'><span id='stRx'>RX 0</span><span id='stTx'>TX 0</span><span id='stMsg'>就绪</span><span class='grow'></span><span id='scInfo' class='mono'></span><span>曲线：滚轮缩放 · Ctrl+滚轮缩纵轴 · 拖动平移 · 双击复位</span></footer>
+<dialog id='toolsDlg'>
+  <div class='dlghead'><b>维护工具</b><span class='warn'>这些命令会让电机开环转动、改写编码器标定、写入 Flash 或立即复位。执行前卸掉负载、固定外壳、保证转子能自由转动，并准备好独立断电。</span><span class='grow'></span><button id='dlgClose'>关闭</button></div>
+  <div class='dlgbody'>
+    <section class='pnl c-red'><h2>校准与维护</h2>
+      <div class='grid'>
+        <div class='card'><h2>编码器读数 0x90</h2><div class='row'><button class='net' data-enc='0'>读修正值</button><button class='net' data-enc='1'>读原始值</button></div><div class='kv'><span>数值</span><b id='encVal' class='mono'>-</b></div></div>
+        <div class='card'><h2>保存编码器零偏 0x19</h2><p>以当前位置为零偏并写入 Flash，先停机并保持轴静止。</p><button class='net danger' id='kOffset'>执行 0x19</button></div>
+        <div class='card'><h2>电机与编码器对齐 0x18</h2><p>开环正反转，结束才回复，期间不处理其他命令。</p><button class='net danger' id='kAlign'>执行 0x18</button></div>
+        <div class='card'><h2>编码器线性化 0x1B</h2><p>开环正反转，采集线性化表并保存。</p><button class='net danger' id='kLinear'>执行 0x1B</button></div>
+        <div class='card'><h2>双编码器关联对齐 0x20</h2><p>仅支持双编码器辅助方案 1，保持轴静止。</p><button class='net danger' id='kRealign'>执行 0x20</button></div>
+        <div class='card'><h2>维护</h2><div class='row'><button class='net' id='kReboot'>重启 0x07</button><button class='net danger' id='kResetS'>恢复默认 0x48</button></div><label class='chk'><input type='checkbox' id='kUnlock'>解锁 0x4A</label><div class='row'><button class='danger' id='kResetE' disabled>恢复默认编码器参数 0x4A</button></div></div>
+      </div>
+      <h3>执行记录</h3><div id='calLog' class='mono'></div>
+    </section>
+    <section class='pnl c-violet'><h2>广播控制<em>节点 1~8 同时控制</em></h2>
+      <div class='hint'>目标节点需先开启广播模式（0x001E=1）。扭矩、速度、角度广播中，填 0 的槽位会给该节点下发 0 目标。</div>
+      <div class='fgrid'><label class='f'>分组<select id='bGroup'><option value='1'>组 1：节点 1~4</option><option value='2'>组 2：节点 5~8</option></select></label><label class='f'>类型<select id='bType'><option value='torque'>扭矩（LSB）</option><option value='speed'>输出端速度（°/s）</option><option value='angle'>输出端角度（°）</option><option value='mix'>混合命令</option></select></label></div>
+      <div class='row'><button class='net' id='bEnable'>当前节点开启广播</button><button class='net' id='bDisable'>当前节点关闭广播</button></div>
+      <table><thead><tr><th>槽位</th><th>节点</th><th>值 / 命令</th><th>参数</th></tr></thead><tbody id='bSlots'></tbody></table>
+      <div class='row'><button class='net primary' id='bSend'>发送广播</button><b id='bFrame' class='mono'></b></div>
+      <div id='bReplies' class='mono'></div>
+    </section>
+  </div>
+</dialog>
+<script src='js/slcan.js'></script>
+<script src='js/protocol.js'></script>
+<script src='js/params.js'></script>
+<script src='js/scope.js'></script>
+<script src='js/app.js'></script>
+<script src='js/panel-scope.js'></script>
+<script src='js/panel-settings.js'></script>
+<script src='js/panel-pid.js'></script>
+<script src='js/panel-tools.js'></script>
+<script src='js/panel-monitor.js'></script>
+<script src='js/ui.js'></script>
+</body>
+</html>
